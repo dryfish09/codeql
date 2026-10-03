@@ -7,7 +7,9 @@
  * @id cpp/infinite-loop-with-unsatisfiable-exit-condition
  * @problem.severity warning
  * @security-severity 7.5
+ * @precision medium
  * @tags security
+ *       correctness
  *       external/cwe/cwe-835
  */
 
@@ -17,45 +19,50 @@ private import semmle.code.cpp.rangeanalysis.PointlessComparison
 import semmle.code.cpp.controlflow.internal.ConstantExprs
 
 /**
- * Holds if there is a control flow edge from `src` to `dst`, but
- * it can never be taken due to `cmp` always having value `value`.
+ * Holds if there is a control flow edge from `src` to `dst` that
+ * can never be taken because `cmp` is provably always `value`.
  */
 predicate impossibleEdge(ComparisonOperation cmp, boolean value, BasicBlock src, BasicBlock dst) {
   cmp = src.getEnd() and
   reachablePointlessComparison(cmp, _, _, value, _) and
-  if value = true then dst = src.getAFalseSuccessor() else dst = src.getATrueSuccessor()
-}
-
-BasicBlock enhancedSucc(BasicBlock bb) {
-  result = bb.getASuccessor() and not impossibleEdge(_, _, bb, result)
+  if value = true
+  then dst = src.getAFalseSuccessor()
+  else dst = src.getATrueSuccessor()
 }
 
 /**
- * Holds if `cmp` always has value `value`, and if that will cause
- * non-termination.
+ * Successor relation with impossible edges removed.
+ */
+BasicBlock enhancedSucc(BasicBlock bb) {
+  result = bb.getASuccessor() and
+  not exists(ComparisonOperation cmp, boolean v |
+    impossibleEdge(cmp, v, bb, result)
+  )
+}
+
+/**
+ * Holds if `cmp` is provably constant, and that constant value
+ * makes the function's exit block unreachable via any path that
+ * does not itself cross an impossible edge.
  *
- * It only holds if the function exit is reachable using
- * the standard `getASuccessor` relation, but not using
- * `enhancedSucc`. This means that it does not hold for
- * comparison operations which are trivially true or false, such as
- * ```
- * while (1) { ... }
- * ```
- * Since this loop is obviously infinite, we assume that it was written
- * intentionally.
+ * Trivial cases such as `while (1) { ... }` do not trigger this,
+ * because they have no `ComparisonOperation` condition. We treat
+ * those as intentional.
  */
 predicate impossibleEdgeCausesNonTermination(ComparisonOperation cmp, boolean value) {
-  exists(BasicBlock src |
+  exists(BasicBlock src, EntryBasicBlock entry |
     impossibleEdge(cmp, value, src, _) and
+    // The exit is normally reachable from src...
     src.getASuccessor+() instanceof ExitBasicBlock and
+    // ...but not once impossible edges are removed.
     not enhancedSucc+(src) instanceof ExitBasicBlock and
-    // Make sure that the source is reachable to reduce
-    // false positives.
-    exists(EntryBasicBlock entry | src = enhancedSucc+(entry))
+    // And src itself is genuinely reachable from function entry.
+    src = enhancedSucc+(entry)
   )
 }
 
 from ComparisonOperation cmp, boolean value
 where impossibleEdgeCausesNonTermination(cmp, value)
 select cmp,
-  "Function exit is unreachable because this condition is always " + value.toString() + "."
+  "Function exit is unreachable because this condition is always " +
+    value.toString() + "."
