@@ -37,7 +37,7 @@ runs:
           codeql-compile-${{ inputs.key }}-main-
     - name: Fill cache (only branch push)
       if: ${{ github.event_name != 'pull_request' }}
-      uses: actions/cache@v3
+      uses: actions/cache@v6
       with:
         path: |
           **/.cache
